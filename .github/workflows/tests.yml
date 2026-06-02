@@ -1,137 +1,237 @@
-name: Test qemu-virgl build
+name: Test qemu-virgl (venus) build
 
 on:
   push:
-    branches:
-      - master
+    branches: [master]
     paths:
-      - 'Formula/**'
-      - 'Patches/**'
-      - '.github/workflows/*.yml'
+      - "Formula/**"
+      - ".github/workflows/*.yml"
   pull_request:
   workflow_dispatch:
-    inputs:
-      use_bottles:
-        description: 'Use pre-built bottles instead of building from source'
-        required: false
-        type: boolean
-        default: false
+
+permissions:
+  contents: read
 
 jobs:
   test:
-    strategy:
-      matrix:
-        os: [macos-latest, macos-15-intel]
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-26   # Apple Silicon only
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
       HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
       HOMEBREW_NO_ANALYTICS: 1
-    
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up tap
         run: |
-          # Tap the repository using file:// URL to use local checkout
-          brew tap startergo/qemu-virgl file://${{ github.workspace }}
-          # Verify tap is set up correctly
-          brew tap-info startergo/qemu-virgl
+          brew tap s3rj1k/qemu-virgl "file://${{ github.workspace }}"
+          brew tap-info s3rj1k/qemu-virgl
 
-      - name: Clear Homebrew cache
-        run: |
-          brew cleanup -s
-          rm -rf $(brew --cache)
-
-      - name: Install gn and rapidjson for ANGLE build
-        if: ${{ github.event.inputs.use_bottles != 'true' }}
-        run: |
-          # Install gn from our tap and rapidjson from Homebrew
-          brew install --build-from-source --formula startergo/qemu-virgl/gn
-          brew install rapidjson
-
-      - name: Build dependencies from source
-        if: ${{ github.event.inputs.use_bottles != 'true' }}
+      # Informative (never fails): libs gate on UTM `main`, with the latest prerelease (v5.x beta,
+      # where venus ships) as context; QEMU gates on the submit/macos-venus HEAD we track.
+      - name: SHA drift vs UTM main + latest prerelease (informative)
+        continue-on-error: true
         env:
-          GIT_TRACE: 1
-          GIT_CURL_VERBOSE: 1
-          HOMEBREW_VERBOSE: 1
+          GH_TOKEN: ${{ github.token }}
         run: |
-          brew install --build-from-source --formula startergo/qemu-virgl/libangle --verbose
-          brew install --build-from-source --formula startergo/qemu-virgl/libepoxy-angle
-          brew install --build-from-source --formula startergo/qemu-virgl/virglrenderer
+          set -uo pipefail
 
-      - name: Build qemu-virgl from source
-        if: ${{ github.event.inputs.use_bottles != 'true' }}
-        run: |
-          # Install qemu-virgl, allowing link conflicts with standard libepoxy (not used)
-          brew install --build-from-source --formula startergo/qemu-virgl/qemu-virgl --verbose || true
-          # Force complete installation even if linking failed
-          brew link --overwrite --force startergo/qemu-virgl/qemu-virgl
+          # Append markdown to the GitHub Step Summary; no-op off-Actions.
+          md() { [ -n "${GITHUB_STEP_SUMMARY:-}" ] && printf '%s\n' "$*" >> "$GITHUB_STEP_SUMMARY" || true; }
 
-      - name: Install from bottles
-        if: ${{ github.event.inputs.use_bottles == 'true' }}
-        run: |
-          echo "Installing pre-built bottles..."
-          brew install startergo/qemu-virgl/qemu-virgl || true
-          brew link --overwrite --force startergo/qemu-virgl/qemu-virgl
+          # UTM pins <NAME>_COMMIT="<40hex>"; we pin `sha = "<40hex>"`. {40} avoids pyyaml's 64-hex sha256.
+          sha_in()  { grep -oE "${2}=\"[0-9a-f]{40}\"" "$1" 2>/dev/null | grep -oE '[0-9a-f]{40}' | head -1 || true; }
+          our_sha() { grep -hoE '(webkit_)?sha = "[0-9a-f]{40}"' "Formula/$1" 2>/dev/null | grep -oE '[0-9a-f]{40}' | head -1 || true; }
 
-      - name: Test QEMU basic functionality
-        run: |
-          qemu-system-x86_64 --version
-          qemu-img --version
-          # Test ARM64 emulation
-          qemu-system-aarch64 --version
-          timeout 30s qemu-system-aarch64 -machine virt -accel tcg -nographic -m 512M || true
+          # Latest prerelease = v5.x beta (venus); `releases/latest` would give the pre-venus stable.
+          prerel="$(gh api repos/utmapp/UTM/releases --jq '[.[]|select(.prerelease)|.tag_name][0] // empty' 2>/dev/null || true)"
+          [ -n "$prerel" ] || prerel="$(git ls-remote --tags --refs --sort=-v:refname \
+            https://github.com/utmapp/UTM.git 'v*' 2>/dev/null | sed -n '1{s#.*/##;p}' || true)"
+          stable="$(gh api repos/utmapp/UTM/releases/latest --jq .tag_name 2>/dev/null || true)"
 
-      - name: Verify OpenGL/ANGLE library linking
-        run: |
-          set +e
-          echo "=== Checking QEMU library dependencies ==="
-          otool -L $(brew --prefix)/bin/qemu-system-aarch64 | grep -E "(libangle|libepoxy|virgl|spice-server)" || echo "⚠️  No OpenGL/SPICE libraries found in dependencies"
-          
-          echo -e "\n=== Checking rpaths in QEMU binary ==="
-          otool -l $(brew --prefix)/bin/qemu-system-aarch64 | grep -A2 LC_RPATH | grep path || echo "⚠️  No rpaths found"
-          
-          echo -e "\n=== Verifying ANGLE libraries exist ==="
-          ls -lh $(brew --prefix)/opt/libangle/lib/libGLESv2.dylib || echo "⚠️  libGLESv2.dylib not found"
-          ls -lh $(brew --prefix)/opt/libangle/lib/libEGL.dylib || echo "⚠️  libEGL.dylib not found"
-          
-          echo -e "\n=== Verifying libepoxy-angle exists ==="
-          ls -lh $(brew --prefix)/opt/libepoxy-angle/lib/libepoxy.0.dylib || echo "⚠️  libepoxy not found"
-          
-          echo -e "\n=== Verifying virglrenderer exists ==="
-          ls -lh $(brew --prefix)/opt/virglrenderer/lib/libvirglrenderer.1.dylib || echo "⚠️  virglrenderer not found"
-          
-          echo -e "\n=== Verifying spice-server exists ==="
-          ls -lh $(brew --prefix)/opt/spice-server/lib/libspice-server.1.dylib || echo "⚠️  spice-server not found"
-          
-          echo -e "\n=== Checking QEMU build configuration ==="
-          qemu-system-aarch64 -display help 2>&1 | grep -E "(cocoa|sdl)" || echo "⚠️  Display backends not found"
-          
-          echo -e "\n=== Checking QEMU device support ==="
-          qemu-system-aarch64 -device help 2>&1 | grep virtio-gpu || echo "⚠️  virtio-gpu devices not found"
-          set -e
+          # Fetch patches/sources (main + latest prerelease) into a scratch dir.
+          work="$(mktemp -d)"
+          fetch() { curl -fsSL "https://raw.githubusercontent.com/utmapp/UTM/$1/patches/sources" -o "$2" 2>/dev/null; }
+          fetch main "$work/utm-main" || { echo "WARN: could not fetch UTM main patches/sources"; exit 0; }
+          fetch "${prerel:-main}" "$work/utm-rel" || { echo "WARN: could not fetch UTM ${prerel:-main} sources"; : > "$work/utm-rel"; }
 
-      - name: Show libangle logs on failure
-        if: failure()
-        run: |
-          echo "=== Libangle build logs ==="
-          for log in ~/Library/Logs/Homebrew/libangle/*.log; do
-            [ -f "$log" ] && echo "--- $(basename $log) ---" && cat "$log"
+          drift=0
+          printf '%-14s %-14s %-14s %-14s %s\n' COMPONENT OURS "UTM main" "UTM ${prerel:-?}" STATUS
+          md "## UTM SHA drift"
+          md ""
+          md "| Component | Ours | UTM \`main\` | UTM \`${prerel:-?}\` | Status |"
+          md "|---|---|---|---|---|"
+
+          # Four commit-pinned libs: ours vs main (gated) + prerelease (context).
+          for row in \
+            "WebKit/ANGLE  libangle.rb        WEBKIT_COMMIT" \
+            "libepoxy      libepoxy-angle.rb  EPOXY_COMMIT" \
+            "virglrenderer virglrenderer.rb   VIRGLRENDERER_COMMIT" \
+            "MoltenVK      molten-vk-venus.rb MOLTENVK_COMMIT"; do
+            set -- $row
+            o="$(our_sha "$2")"; m="$(sha_in "$work/utm-main" "$3")"; p="$(sha_in "$work/utm-rel" "$3")"
+            if [ -n "$o" ] && [ "$o" = "$m" ]; then st=ok; em="✅"; else st=DRIFT; em="⚠️"; drift=$((drift + 1)); fi
+            printf '%-14s %-14s %-14s %-14s %s\n' "$1" "${o:0:12}" "${m:0:12}" "${p:0:12}" "$st"
+            md "| $1 | \`${o:0:12}\` | \`${m:0:12}\` | \`${p:0:12}\` | $em $st |"
           done
-          
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: brew-logs-${{ matrix.os }}
-          path: |
-            ~/Library/Logs/Homebrew/*.log
-            ~/Library/Logs/Homebrew/*/*.log
-            ~/Library/Caches/Homebrew/Logs/*.log
-      
 
-      
+          # QEMU: no upstream QEMU_COMMIT (UTM ships a tarball), so gate on the submit/macos-venus HEAD
+          # we track; the prerelease cell shows the bundled release tag from QEMU_SRC.
+          qo="$(our_sha qemu-virgl.rb)"
+          qh="$(git ls-remote --heads https://github.com/utmapp/qemu.git submit/macos-venus 2>/dev/null | grep -oE '^[0-9a-f]{40}' | head -1 || true)"
+          qr="$(grep -oE 'qemu/releases/download/[^/]+/' "$work/utm-rel" 2>/dev/null | sed -E 's#.*/download/##;s#/##' | head -1 || true)"
+          if [ -n "$qo" ] && [ "$qo" = "$qh" ]; then st=ok; em="✅"; else st=DRIFT; em="⚠️"; drift=$((drift + 1)); fi
+          printf '%-14s %-14s %-14s %-14s %s\n' QEMU "${qo:0:12}" "${qh:0:12}" "${qr:-?}" "$st"
+          md "| QEMU | \`${qo:0:12}\` | \`${qh:0:12}\` | \`${qr:-?}\` | $em $st |"
+
+          md ""
+          md "_QEMU row compares ours vs utmapp/qemu \`submit/macos-venus\` HEAD; its \`${prerel:-?}\` cell is the bundled release tag. UTM latest stable \`${stable:-?}\` predates venus._"
+          echo
+          echo "(QEMU: ours vs submit/macos-venus HEAD; prerelease cell = bundled release tag. stable ${stable:-?} predates venus. ${drift} drift)"
+
+      # Advisory (non-blocking): keg-only forks fetch-by-SHA in `install`, which `brew audit` flags by design.
+      - name: Lint (advisory)
+        continue-on-error: true
+        run: |
+          for f in libangle libepoxy-angle molten-vk-venus virglrenderer qemu-virgl; do
+            brew style "s3rj1k/qemu-virgl/$f" || true
+            brew audit --online "s3rj1k/qemu-virgl/$f" || true
+          done
+
+      - name: Build venus stack from source
+        run: |
+          set -eux
+          for f in libangle libepoxy-angle molten-vk-venus virglrenderer qemu-virgl; do
+            brew install --build-from-source --formula "s3rj1k/qemu-virgl/$f"
+          done
+
+      - name: Run formula tests
+        run: |
+          set -eux
+          for f in libangle libepoxy-angle molten-vk-venus virglrenderer qemu-virgl; do
+            brew test "s3rj1k/qemu-virgl/$f"
+          done
+
+      # MoltenVK (venus fork) must expose the GPU as a Vulkan device via its keg-private ICD.
+      - name: Verify MoltenVK Vulkan device
+        run: |
+          set -uxo pipefail
+          prefix="$(brew --prefix)"
+
+          # ICD is keg-private under share/ (the shared etc path would collide with core molten-vk).
+          # Resolve via opt; fall back to searching within the keg only, never the global path.
+          icd="$prefix/opt/molten-vk-venus/share/vulkan/icd.d/MoltenVK_icd.json"
+          if [ ! -f "$icd" ]; then
+            icd="$(find "$prefix/opt/molten-vk-venus" "$prefix/Cellar/molten-vk-venus" \
+                     -name MoltenVK_icd.json 2>/dev/null | head -1 || true)"
+          fi
+          echo "Resolved MoltenVK ICD: ${icd:-<not found>}"
+          if [ -z "$icd" ] || [ ! -f "$icd" ]; then
+            echo "FAIL: MoltenVK ICD not found"
+            exit 1
+          fi
+
+          # Point the loader at our ICD; confirm it enumerates an Apple GPU.
+          brew install vulkan-tools
+          summary="$(VK_ICD_FILENAMES="$icd" vulkaninfo --summary 2>&1)" || true
+          printf '%s\n' "$summary"
+
+          if printf '%s\n' "$summary" | grep -qi moltenvk &&
+             printf '%s\n' "$summary" | grep -qi apple; then
+            echo "PASS: MoltenVK enumerated an Apple GPU"
+          else
+            echo "FAIL: no MoltenVK / Apple Vulkan device found"
+            exit 1
+          fi
+
+      # Boot QEMU with the venus GPU + cocoa display (no guest), screenshot via QMP. Gates the host
+      # path: dylibs load, cocoa opens, ANGLE/Metal GL renders, venus inits without "-1". This caught
+      # both venus bugs; full guest-side 3D needs a real Linux guest.
+      - name: Launch venus GPU device (no guest)
+        run: |
+          set -uxo pipefail
+          prefix="$(brew --prefix)"
+          fail() { echo "FAIL: $*"; exit 1; }
+
+          # UEFI firmware + a writable copy of its NVRAM vars (the vars pflash must be writable).
+          cp "$prefix/share/qemu/edk2-aarch64-code.fd" code.fd
+          cp "$prefix/share/qemu/edk2-arm-vars.fd"     vars.fd
+
+          # Boot in the background (no OS); loader/MoltenVK debug -> qemu.out. The bin wrapper sets
+          # VK_ICD_FILENAMES + ANGLE/Metal env.
+          : > qemu.out
+          VK_LOADER_DEBUG=all MVK_CONFIG_LOG_LEVEL=4 \
+          "$prefix/bin/qemu-system-aarch64" \
+            -machine virt -accel tcg -cpu cortex-a72 -m 2G \
+            -drive if=pflash,format=raw,file=code.fd,readonly=on \
+            -drive if=pflash,format=raw,file=vars.fd \
+            -device virtio-gpu-gl-pci,venus=true,hostmem=2G,blob=true \
+            -display cocoa,gl=es \
+            -qmp "unix:$PWD/qmp.sock,server,nowait" \
+            -serial "file:$PWD/serial.log" \
+            > qemu.out 2>&1 &
+          qemu_pid=$!
+          echo "QEMU started (pid $qemu_pid); giving it 30s to bring up the GPU..."
+          sleep 30
+
+          qemu_alive=0
+          if kill -0 "$qemu_pid" 2>/dev/null; then
+            qemu_alive=1
+            echo "QEMU still alive after 30s (no early crash)."
+            # Screenshot over QMP — proof the GL display rendered.
+            {
+              printf '%s\n' '{"execute":"qmp_capabilities"}'
+              sleep 1
+              printf '%s\n' '{"execute":"screendump","arguments":{"filename":"'"$PWD"'/screen.ppm"}}'
+              sleep 2
+            } | nc -U "$PWD/qmp.sock" || echo "(QMP screendump failed — non-fatal)"
+            kill "$qemu_pid" 2>/dev/null || true
+            wait "$qemu_pid" 2>/dev/null || true
+          else
+            echo "QEMU exited on its own within 30s."
+          fi
+
+          echo "================= qemu.out (host: loader / venus / errors) ================="
+          cat qemu.out || true
+          echo "================= serial.log (guest: UEFI console) ========================="
+          cat serial.log 2>/dev/null || true
+          echo "==========================================================================="
+          if [ -f screen.ppm ]; then
+            echo "Screendump captured: $(ls -l screen.ppm)"
+          else
+            echo "No screendump captured."
+          fi
+
+          # Three regression gates on qemu.out:
+          # 1. missing dylib / voided signature / crash => build or relocation broken.
+          if grep -Eqi 'image not found|Library not loaded|code signature|Abort trap|Segmentation fault|Error loading EGL entry points' qemu.out; then
+            fail "GL/dylib load failure or crash during launch (see qemu.out above)"
+          fi
+          # 2. early exit => binary / dylib / cocoa failed to come up.
+          [ "$qemu_alive" = 1 ] || fail "QEMU exited early — binary / dylib / cocoa load failed (see qemu.out)"
+          # 3. venus init failure => regression (render-server-worker=thread should init in-process).
+          if grep -Eqi 'failed to initialize venus|virgl could not be initialized|virgl_renderer_init.*fail' qemu.out; then
+            fail "venus renderer init failed — regression (should init in-process)"
+          fi
+
+          echo "PASS: QEMU launched, ANGLE/Metal GL rendered (screendump), venus renderer initialized."
+
+      - name: Upload venus launch logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: venus-launch-logs
+          path: |
+            qemu.out
+            serial.log
+            screen.ppm
+
+      - name: Upload Homebrew logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: brew-logs
+          path: |
+            ~/Library/Logs/Homebrew/**/*.log

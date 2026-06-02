@@ -1,64 +1,68 @@
 class LibepoxyAngle < Formula
-  desc "Library for handling OpenGL function pointer management"
-  homepage "https://github.com/anholt/libepoxy"
-  url "https://github.com/anholt/libepoxy.git", 
-      revision: "e98617e62e74a835d4e403cd270afaf296afe839",
-      using: :git
-  version "2025.03.08.1"
+  desc "Libepoxy GL dispatch built for ANGLE/EGL (qemu-virgl venus)"
+  homepage "https://github.com/utmapp/libepoxy"
+  # Dummy url: the pinned commit lives on a force-pushed branch and is NOT
+  # reachable from the branch tip, so Homebrew's git strategy can't fetch it.
+  # The exact revision is fetched by SHA in `install` (GitHub allows fetching a
+  # reachable SHA directly).
+  url "https://github.com/s3rj1k/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
+  version "2026.06.01"
   license "MIT"
 
-  bottle do
-    root_url "https://github.com/startergo/homebrew-qemu-virgl/releases/download/v20251128.223351"
-    sha256 cellar: :any, arm64_sequoia: "df6b58811ead99a75a224326867e8beea020e3066a8366bded7cbf22075b2d87"
-    sha256 cellar: :any, sequoia:       "3d5f027a51643306caf3c3c4530e23766bd465a06272ba8912a51eb04fe4eda4"
+  def self.sha256(_)
+    nil
   end
+
+  keg_only "venus-private libepoxy variant linked against ANGLE"
 
   depends_on "meson" => :build
   depends_on "ninja" => :build
   depends_on "pkg-config" => :build
-  depends_on "python@3.13" => :build
-  depends_on "startergo/qemu-virgl/libangle"
-
-  # Waiting for upstreaming of https://github.com/akihikodaki/libepoxy/tree/macos
-  patch :p1 do
-    url "https://raw.githubusercontent.com/startergo/homebrew-qemu-virgl/refs/heads/master/Patches/libepoxy-v03.diff"
-    sha256 "24abc33e17b37a1fa28925c52b93d9c07e8ec5bb488edda2b86492be979c1fc4"
-  end
+  depends_on arch: :arm64
+  depends_on "s3rj1k/qemu-virgl/libangle"
 
   def install
-    mkdir "build" do
-      system "meson", *std_meson_args,
-             "-Dc_args=-I#{Formula["startergo/qemu-virgl/libangle"].opt_prefix}/include",
-             "-Dc_link_args=-L#{Formula["startergo/qemu-virgl/libangle"].opt_prefix}/lib",
-             "-Degl=yes", "-Dx11=false",
-             ".."
-      system "ninja", "-v"
-      system "ninja", "install", "-v"
+    sha = "5014658f79e4d6872a1ad6754da9098ccd9d4fc5"
+    system "git", "init", "-q", "repo"
+    system "git", "-C", "repo", "fetch", "--depth", "1",
+           "https://github.com/utmapp/libepoxy.git", sha
+    system "git", "-C", "repo", "checkout", "-q", "FETCH_HEAD"
+
+    angle = Formula["s3rj1k/qemu-virgl/libangle"]
+    cd "repo" do
+      # Load ANGLE EGL/GLES via @rpath instead of the macOS framework path, so it
+      # works under sudo (SIP strips DYLD_FRAMEWORK_PATH). @rpath resolves against
+      # this dylib's own LC_RPATH, baked to the libangle keg below.
+      # Non-block inreplace RAISES if the pattern isn't found, so a silently-unpatched
+      # libepoxy can never ship (the block form's gsub! no-ops silently on a miss).
+      inreplace "src/dispatch_common.c",
+                '#define EGL_LIB "EGL.framework/Versions/Current/EGL"',
+                '#define EGL_LIB "@rpath/libEGL.dylib"'
+      inreplace "src/dispatch_common.c",
+                '#define GLES1_LIB "GLESv1_CM.framework/Versions/Current/GLESv1_CM"',
+                '#define GLES1_LIB "@rpath/libGLESv1_CM.dylib"'
+      inreplace "src/dispatch_common.c",
+                '#define GLES2_LIB "GLESv2.framework/Versions/Current/GLESv2"',
+                '#define GLES2_LIB "@rpath/libGLESv2.dylib"'
+
+      system "meson", "setup", "build", *std_meson_args,
+             "-Degl=yes", "-Dx11=false", "-Dtests=false",
+             "-Dc_args=-I#{angle.opt_include}",
+             "-Dc_link_args=-L#{angle.opt_lib}"
+      system "meson", "compile", "-C", "build"
+      system "meson", "install", "-C", "build"
     end
+
+    # Bake an LC_RPATH to libangle's keg so the @rpath dlopens resolve; re-sign
+    # (editing the Mach-O voids the arm64 signature).
+    dylib = lib/"libepoxy.0.dylib"
+    rpath = angle.opt_lib.to_s
+    MachO::Tools.add_rpath(dylib.to_s, rpath) unless MachO.open(dylib.to_s).rpaths.include?(rpath)
+    system "codesign", "--sign", "-", "--force", dylib
   end
 
   test do
-    (testpath/"test.c").write <<~EOS
-      #include <epoxy/gl.h>
-      #include <OpenGL/CGLContext.h>
-      #include <OpenGL/CGLTypes.h>
-      #include <OpenGL/OpenGL.h>
-      int main() {
-          CGLPixelFormatAttribute attribs[] = {0};
-          CGLPixelFormatObj pix;
-          int npix;
-          CGLContextObj ctx;
-          CGLChoosePixelFormat((const CGLPixelFormatAttribute *)attribs, &pix, &npix);
-          CGLCreateContext(pix, NULL, &ctx);
-          glClear(GL_COLOR_BUFFER_BIT);
-          CGLReleasePixelFormat(pix);
-          CGLReleaseContext(ctx);
-          return 0;
-      }
-    EOS
-    system ENV.cc, "test.c", "-L#{lib}", "-I#{include}/epoxy", "-lepoxy", "-framework", "OpenGL", "-o", "test"
-    system "ls", "-lh", "test"
-    system "file", "test"
-    system "./test"
+    assert_match Formula["s3rj1k/qemu-virgl/libangle"].opt_lib.to_s,
+                 shell_output("otool -l #{lib}/libepoxy.0.dylib")
   end
 end

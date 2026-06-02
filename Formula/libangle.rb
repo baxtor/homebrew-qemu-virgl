@@ -1,267 +1,101 @@
 class Libangle < Formula
-  desc "Conformant OpenGL ES implementation for Windows, Mac, Linux, iOS and Android"
-  homepage "https://chromium.googlesource.com/angle/angle"
-  # Use a dummy URL - actual ANGLE download happens in install method
-  # HEAD-only formula: no checksum verification for dummy tarball
-  url "https://github.com/startergo/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
-  version "2025.11.24"
+  desc "ANGLE (OpenGL ES over Metal) from utmapp/WebKit, for qemu-virgl venus"
+  homepage "https://github.com/utmapp/WebKit"
+  # Dummy url: the real source is a sparse, blobless checkout of WebKit done in
+  # `install` (the full WebKit repo is far too large for a normal git url/bottle
+  # fetch). The pinned WEBKIT_SHA below is the real, reproducible input.
+  url "https://github.com/s3rj1k/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
+  version "2026.06.01"
   license "BSD-3-Clause"
 
-  bottle do
-    root_url "https://github.com/startergo/homebrew-qemu-virgl/releases/download/v20251128.223351"
-    sha256 cellar: :any, arm64_sequoia: "322cba4758dec5d33e68773cdc7b4808af62575d09bff6430e51036f47567d83"
-    sha256 cellar: :any, sequoia:       "4d46e054be4f6248b7f8733e5be25ae0af3b79079f2f9008555b643270f448ff"
-  end
-  
-  # Skip checksum verification for dummy URL
+  # Dummy url has no stable checksum (master tarball changes per commit).
   def self.sha256(_)
     nil
   end
-  
-  # ANGLE will be downloaded in install method to avoid Homebrew's slow git handling
-  @@angle_repo = "https://chromium.googlesource.com/angle/angle"
-  @@angle_commit = "c2b0dc24cfaf2f266bb3f12c56c49d7b8f3b4a80"
 
-  depends_on "startergo/qemu-virgl/gn" => :build
-  depends_on "ninja" => :build
-  depends_on "python@3.13" => :build
-  depends_on "rapidjson"
+  keg_only "venus-private ANGLE EGL/GLESv2 would shadow system GL"
 
-  # Chromium build dependencies - commit hashes from DEPS
-  resource "chromium-build" do
-    url "https://github.com/gsource-mirror/chromium-src-build.git",
-        revision: "dd54bc718b7c5363155660d12b7965ea9f87ada9",
-        using: :git
-  end
+  depends_on "ccache" => :build
+  depends_on xcode: ["12.0", :build]
+  depends_on arch: :arm64
 
-  resource "chromium-testing" do
-    url "https://github.com/gsource-mirror/chromium-src-testing.git",
-        revision: "6d914f364e23232b935ac9fb3a615065b716da13",
-        using: :git
-  end
-
-  resource "vulkan-headers" do
-    url "https://github.com/KhronosGroup/Vulkan-Headers.git",
-        revision: "d1cd37e925510a167d4abef39340dbdea47d8989",
-        using: :git
-  end
-
-  resource "chromium-zlib" do
-    url "https://github.com/gsource-mirror/chromium-src-third_party-zlib.git",
-        revision: "85f05b0835f934e52772efc308baa80cdd491838",
-        using: :git
-  end
-
-  resource "chromium-jsoncpp" do
-    url "https://github.com/gsource-mirror/chromium-src-third_party-jsoncpp.git",
-        revision: "f62d44704b4da6014aa231cfc116e7fd29617d2a",
-        using: :git
-  end
-
-  resource "jsoncpp-source" do
-    url "https://github.com/open-source-parsers/jsoncpp.git",
-        revision: "42e892d96e47b1f6e29844cc705e148ec4856448",
-        using: :git
-  end
-
-  resource "spirv-headers" do
-    url "https://github.com/KhronosGroup/SPIRV-Headers.git",
-        revision: "01e0577914a75a2569c846778c2f93aa8e6feddd",
-        using: :git
-  end
-
-  resource "spirv-tools" do
-    url "https://github.com/KhronosGroup/SPIRV-Tools.git",
-        revision: "d7ac0e0fd062953f946169304456b58e36c32778",
-        using: :git
-  end
-
-  resource "astc-encoder" do
-    url "https://github.com/ARM-software/astc-encoder.git",
-        revision: "2319d9c4d4af53a7fc7c52985e264ce6e8a02a9b",
-        using: :git
-  end
-  
   def install
-    ohai "Downloading ANGLE source (this may take a few minutes)..."
-    # Download ANGLE using the same method as run-arm.sh
-    system "git", "init"
-    system "git", "fetch", @@angle_repo
-    system "git", "checkout", "-f", "FETCH_HEAD"  # Force checkout to overwrite dummy tarball files
-    
-    ohai "Installing Chromium build dependencies..."
-    
-    # Download and setup all Chromium dependencies
-    ohai "Staging chromium-build..."
-    resource("chromium-build").stage do
-      (buildpath/"build").install Dir["*"]
+    webkit_sha = "ed78ab6e1a37f4f11583a0bd038f22ec91f3ff10"
+
+    # Sparse, blobless WebKit checkout — only ANGLE (+ build config) — mirroring
+    # the build-qemu-vulkan-macos.yaml workflow. Avoids a multi-GB full clone.
+    system "git", "clone", "--filter=tree:0", "--no-checkout",
+           "https://github.com/utmapp/WebKit.git", "webkit"
+    system "git", "-C", "webkit", "sparse-checkout", "init"
+    system "git", "-C", "webkit", "sparse-checkout", "set",
+           "Source/ThirdParty/ANGLE", "Configurations", "Tools/ccache"
+    system "git", "-C", "webkit", "-c", "advice.detachedHead=false",
+           "checkout", webkit_sha
+
+    angle = buildpath/"webkit/Source/ThirdParty/ANGLE"
+    cd angle do
+      # ANGLE's libEGL loads its GLESv2 backend via OpenSystemLibraryAndGetError("GLESv2"),
+      # but its macOS branch builds "GLESv2.framework/Versions/Current/GLESv2" and searches
+      # SystemDir — and we build ANGLE as plain dylibs, so that dlopen fails ("Error loading
+      # EGL entry points") and qemu segfaults under `-display cocoa,gl=es`. Make it load
+      # lib<name>.dylib via the caller's searchType (ModuleDir => next to libEGL) instead.
+      # Two short inreplaces (each raises if unmatched; Homebrew forbids rubocop:disable, and
+      # the full source lines exceed the line-length limit).
+      inreplace "src/common/system_utils.cpp",
+                'std::string(libraryName) + ".framework/Versions/Current/" + std::string(libraryName)',
+                '"lib" + std::string(libraryName) + ".dylib"'
+      inreplace "src/common/system_utils.cpp",
+                "SearchType::SystemDir, errorOut);",
+                "searchType, errorOut);"
+
+      # Flags copied verbatim from the workflow "Build ANGLE" step.
+      xcodebuild "archive",
+                 "-archivePath", buildpath/"ANGLE",
+                 "-scheme", "ANGLE",
+                 "-sdk", "macosx",
+                 "-arch", "arm64",
+                 "-configuration", "Release",
+                 "WEBCORE_LIBRARY_DIR=/usr/local/lib",
+                 "NORMAL_UMBRELLA_FRAMEWORKS_DIR=",
+                 "CODE_SIGNING_ALLOWED=NO",
+                 "MACOSX_DEPLOYMENT_TARGET=11.0",
+                 "GCC_TREAT_WARNINGS_AS_ERRORS=NO"
     end
 
-    ohai "Staging chromium-testing..."
-    resource("chromium-testing").stage do
-      (buildpath/"testing").install Dir["*"]
-    end
+    products = buildpath/"ANGLE.xcarchive/Products/usr/local/lib"
+    lib.install Dir["#{products}/*.dylib"]
+    include.install Dir["#{angle}/include/*"]
 
-    (buildpath/"third_party/vulkan-headers").mkpath
-    resource("vulkan-headers").stage do
-      (buildpath/"third_party/vulkan-headers/src").install Dir["*"]
-    end
-
-    (buildpath/"third_party/zlib").mkpath
-    resource("chromium-zlib").stage do
-      (buildpath/"third_party/zlib").install Dir["*"]
-    end
-
-    (buildpath/"third_party/jsoncpp").mkpath
-    resource("chromium-jsoncpp").stage do
-      (buildpath/"third_party/jsoncpp").install Dir["*"]
-    end
-
-    resource("jsoncpp-source").stage do
-      (buildpath/"third_party/jsoncpp/source").install Dir["*"]
-    end
-
-    (buildpath/"third_party/spirv-headers").mkpath
-    resource("spirv-headers").stage do
-      (buildpath/"third_party/spirv-headers/src").install Dir["*"]
-    end
-
-    (buildpath/"third_party/spirv-tools").mkpath
-    resource("spirv-tools").stage do
-      (buildpath/"third_party/spirv-tools/src").install Dir["*"]
-    end
-
-    (buildpath/"third_party/astc-encoder").mkpath
-    resource("astc-encoder").stage do
-      (buildpath/"third_party/astc-encoder/src").install Dir["*"]
-    end
-
-    ohai "All resources staged successfully"
-    
-    # Create gclient_args.gni
-    ohai "Creating gclient_args.gni..."
-    (buildpath/"build/config/gclient_args.gni").write <<~EOS
-      # Generated from DEPS
-      checkout_angle_internal = false
-      checkout_angle_mesa = false
-      checkout_angle_restricted_traces = false
-      generate_location_tags = false
-      checkout_android = false
-      checkout_android_native_support = false
-      checkout_google_benchmark = false
-      checkout_openxr = false
-      checkout_telemetry_dependencies = false
-    EOS
-
-    # Apply MacPorts-style patches (make them optional to support different ANGLE versions)
-    ohai "Applying patches for system toolchain..."
-    
-    # Fix duplicate use_cxx23 declaration (may exist in build/config/compiler/compiler.gni)
-    if File.exist?("build/config/compiler/compiler.gni")
-      compiler_gni = File.read("build/config/compiler/compiler.gni")
-      if compiler_gni.include?("use_cxx23 = false")
-        inreplace "build/config/compiler/compiler.gni", /^  use_cxx23 = false$/, ""
+    # Archived dylibs carry id "/WebCore.framework/Frameworks/lib*.dylib"
+    # (EGL-dynamic.xcconfig DYLIB_INSTALL_NAME_BASE with an empty umbrella dir).
+    # Strip those bogus paths: rewrite the ANGLE->ANGLE interdeps off
+    # /WebCore.framework via ruby-macho, then re-sign (editing the Mach-O voids
+    # the mandatory arm64 ad-hoc signature). The @rpath dylib id is intent only —
+    # Homebrew relocates dylib ids to the opt path on install. That's fine:
+    # libepoxy's dlopen("@rpath/libEGL.dylib") resolves via libepoxy's OWN
+    # LC_RPATH (baked in libepoxy-angle.rb), not via ANGLE's id; an opt-path id
+    # also dedupes the dlopen'd vs linked instance of each ANGLE dylib.
+    dylibs = Dir["#{lib}/*.dylib"].map { |f| File.basename(f) }
+    dylibs.each do |name|
+      f = lib/name
+      MachO::Tools.change_dylib_id(f.to_s, "@rpath/#{name}")
+      # change_install_name raises if the old name isn't linked, so only rewrite
+      # the WebCore.framework interdeps this dylib actually references.
+      linked = MachO.open(f.to_s).linked_dylibs
+      dylibs.each do |dep|
+        old = "/WebCore.framework/Frameworks/#{dep}"
+        MachO::Tools.change_install_name(f.to_s, old, "@rpath/#{dep}") if linked.include?(old)
       end
+      system "codesign", "--sign", "-", "--force", f
     end
-    
-    # Use system toolchain - check file content first
-    toolchain_content = File.read("build/toolchain/apple/toolchain.gni")
-    has_prefix = toolchain_content.include?("prefix = rebase_path")
-    has_compiler_prefix = toolchain_content.include?("compiler_prefix = ")
-    
-    inreplace "build/toolchain/apple/toolchain.gni" do |s|
-      s.gsub!(/^\s+prefix = rebase_path/, "#    prefix = rebase_path") if has_prefix
-      s.gsub!(/^\s+compiler_prefix = /, "#    compiler_prefix = ") if has_compiler_prefix
-      s.gsub!(/_cc = "\$\{prefix\}clang"/, '_cc = "clang"')
-      s.gsub!(/_cxx = "\$\{prefix\}clang\+\+"/, '_cxx = "clang++"')
-      s.gsub!(/cc = compiler_prefix \+ _cc/, "cc = _cc") if has_compiler_prefix
-      s.gsub!(/cxx = compiler_prefix \+ _cxx/, "cxx = _cxx") if has_compiler_prefix
-      s.gsub!(/ld = _cxx/, "ld = cxx")
-      s.gsub!(/nm = "\$\{prefix\}llvm-nm"/, 'nm = "nm"')
-      s.gsub!(/otool = "\$\{prefix\}llvm-otool"/, 'otool = "otool"')
-      s.gsub!(/_strippath = "\$\{prefix\}llvm-strip"/, '_strippath = "strip"')
-      s.gsub!(/_installnametoolpath = "\$\{prefix\}llvm-install-name-tool"/, '_installnametoolpath = "install_name_tool"')
-      s.gsub!(/rebase_path\("\/\/tools\/clang\/dsymutil\/bin\/dsymutil",\s+root_build_dir\)/, '"dsymutil"')
-    end
-
-    # Create dummy rust-toolchain VERSION
-    (buildpath/"third_party/rust-toolchain").mkpath
-    (buildpath/"third_party/rust-toolchain/VERSION").write "rustc 0.0.0 (00000000 0000-00-00)\n"
-
-    # Symlink rapidjson headers
-    (buildpath/"third_party/rapidjson/src").mkpath
-    ln_s Formula["rapidjson"].opt_include, buildpath/"third_party/rapidjson/src/include"
-
-    # Comment out Rust import if it exists
-    if File.exist?("testing/test.gni") && File.read("testing/test.gni").include?("rust_static_library.gni")
-      inreplace "testing/test.gni",
-        /^import\("\/\/build\/rust\/rust_static_library.gni"\)/,
-        '#import("//build/rust/rust_static_library.gni")'
-    end
-
-    # Remove sanitize_c_array_bounds block if it exists
-    if File.exist?("gni/angle.gni") && File.read("gni/angle.gni").include?("sanitize_c_array_bounds")
-      ohai "Removing sanitize_c_array_bounds block..."
-      inreplace "gni/angle.gni", /# See https:\/\/crbug.com\/386992829.*?^  \}/m, ""
-    end
-
-    ohai "Starting GN configuration..."
-    # Configure and build with gn and ninja
-    system "gn", "gen", "out/Release",
-           "--args=mac_sdk_min=\"0\" " \
-           "is_official_build=true " \
-           "is_clang=false " \
-           "treat_warnings_as_errors=false " \
-           "fatal_linker_warnings=false " \
-           "use_custom_libcxx=false " \
-           "angle_build_tests=false " \
-           "angle_enable_metal=false " \
-           "angle_enable_vulkan=false"
-
-    ohai "Starting ninja build (this will take 10-20 minutes)..."
-    system "ninja", "-C", "out/Release"
-
-    ohai "Installing libraries and headers..."
-    # Install libraries and headers
-    lib.install Dir["out/Release/*.dylib"]
-    include.install Dir["include/*"]
-  end
-
-  def caveats
-    <<~EOS
-      To use libangle with QEMU, add this to your environment before running QEMU:
-      
-      export DYLD_FALLBACK_LIBRARY_PATH="#{opt_lib}:$DYLD_FALLBACK_LIBRARY_PATH"
-      
-      For full documentation and usage examples, see:
-      https://github.com/startergo/homebrew-qemu-virgl
-    EOS
   end
 
   test do
-    (testpath/"test.c").write <<~EOS
-      #include <EGL/egl.h>
-      #include <GLES2/gl2.h>
-      #include <stdio.h>
-      
-      int main() {
-        printf("ANGLE test\\n");
-        EGLint major, minor;
-        EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-        if (display == EGL_NO_DISPLAY) {
-          return 0;
-        }
-        return eglInitialize(display, &major, &minor) ? 0 : 1;
-      }
-    EOS
-    
-    system ENV.cc, "test.c",
-           "-I#{include}",
-           "-L#{lib}",
-           "-lEGL",
-           "-lGLESv2",
-           "-o", "test"
-    
-    system "./test" rescue true
+    assert_path_exists lib/"libEGL.dylib"
+    # Homebrew relocates the dylib id to this keg's opt path (overriding the
+    # `-id @rpath/...` from install), so assert the real post-install state: no
+    # bogus /WebCore.framework path survives, and the id resolves into the keg.
+    refute_match %r{/WebCore\.framework/}, shell_output("otool -L #{lib}/libEGL.dylib")
+    assert_match opt_lib.to_s, shell_output("otool -D #{lib}/libEGL.dylib")
   end
 end

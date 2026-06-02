@@ -1,43 +1,27 @@
-class NoSubmoduleGitDownloadStrategy < GitDownloadStrategy
-  def submodules?; false; end
-end
-
 class QemuVirgl < Formula
-  desc "Emulator for x86 and PowerPC with VirGL acceleration support"
+  desc "QEMU (aarch64) with venus Vulkan-on-Metal GPU acceleration"
   homepage "https://www.qemu.org/"
-  url "https://gitlab.com/qemu-project/qemu.git", 
-      tag: "v10.1.2",
-      revision: "ccaea6b2656ec6eab966585f7b16438208f98de7",
-      using: NoSubmoduleGitDownloadStrategy
-  sha256 "72f41f3708496b45186ca6b6d13982044b04848ecda4aef3f6211699eb4ea1b6"
-  version "10.1.2"
+  # Dummy url: utmapp's submit/macos-venus branch is force-pushed, so the pinned
+  # revision is fetched by SHA in `install`.
+  url "https://github.com/s3rj1k/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
+  version "2026.06.01"
   license "GPL-2.0-only"
 
-  bottle do
-    root_url "https://github.com/startergo/homebrew-qemu-virgl/releases/download/v20251128.223351"
-    sha256 arm64_sequoia: "516c72872f65f429675bc223559f0ac216bcce7b6ecf2f4773766f79494412ad"
-    sha256 sequoia:       "dc3c24c53066911948e6e2d5607d5c97b7b06750445ef4096b58c383259adee2"
+  def self.sha256(_)
+    nil
   end
 
-  livecheck do
-    url "https://www.qemu.org/download/"
-    regex(/href=.*?qemu[._-]v?(\d+(?:\.\d+)+)\.t/i)
-  end
-
-  depends_on "libtool" => :build
-  depends_on "meson" => :build
-  depends_on "ninja" => :build
-  depends_on "pkg-config" => :build
+  depends_on "libtool"     => :build
+  depends_on "meson"       => :build
+  depends_on "ninja"       => :build
+  depends_on "pkg-config"  => :build
   depends_on "python@3.13" => :build
+  depends_on arch: :arm64
 
-  depends_on "coreutils"
   depends_on "dtc"
   depends_on "glib"
   depends_on "gnutls"
-  depends_on "jpeg"
-  depends_on "startergo/qemu-virgl/libangle"
-  depends_on "startergo/qemu-virgl/libepoxy-angle"
-  depends_on "startergo/qemu-virgl/virglrenderer"
+  depends_on "jpeg-turbo"
   depends_on "libpng"
   depends_on "libslirp"
   depends_on "libssh"
@@ -46,177 +30,92 @@ class QemuVirgl < Formula
   depends_on "ncurses"
   depends_on "nettle"
   depends_on "pixman"
+  depends_on "s3rj1k/qemu-virgl/libangle"
+  depends_on "s3rj1k/qemu-virgl/libepoxy-angle"
+  depends_on "s3rj1k/qemu-virgl/molten-vk-venus"
+  depends_on "s3rj1k/qemu-virgl/virglrenderer"
   depends_on "snappy"
   depends_on "spice-protocol"
   depends_on "spice-server"
-  depends_on "vde"
-
-  resource "tomli" do
-    url "https://files.pythonhosted.org/packages/c0/3f/d7af728f075fb08564c5949a9c95e44352e23dee646869fa104a3b2060a3/tomli-2.0.1.tar.gz"
-    sha256 "de526c12914f0c550d15924c62d72abc48d6fe7364aa87328337a31007fe8a4f"
-  end
-
-  resource "test-image" do
-    url "https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.2/official/FD12FLOPPY.zip"
-    sha256 "81237c7b42dc0ffc8b32a2f5734e3480a3f9a470c50c14a9c4576a2561a35807"
-  end
-
-  patch :p1 do
-    url "https://raw.githubusercontent.com/startergo/homebrew-qemu-virgl/refs/heads/master/Patches/qemu-v07.diff"
-    sha256 "d0da295f24ece630f82e685ffa571ce02f11d31f8311942bc0b50d1430f3323a"
-  end
+  depends_on "vulkan-loader"
 
   def install
-    # Setup Python environment
+    sha = "f714f0e3370e8b4858a249ebaf6522f19b2fd97f"
+    system "git", "init", "-q", "repo"
+    system "git", "-C", "repo", "fetch", "--depth", "1",
+           "https://github.com/utmapp/qemu.git", sha
+    system "git", "-C", "repo", "checkout", "-q", "FETCH_HEAD"
+
     ENV["LIBTOOL"] = "glibtool"
-    
-    python3 = Formula["python@3.13"].opt_bin/"python3.13"
-    ENV["PYTHON"] = python3
+    ENV["PYTHON"] = Formula["python@3.13"].opt_bin/"python3.13"
 
-    venv_path = buildpath/"venv"
-    system python3, "-m", "venv", venv_path
-    venv_python = venv_path/"bin/python"
-    
-    resource("tomli").stage do
-      system venv_python, "-m", "pip", "install", "."
+    angle = Formula["s3rj1k/qemu-virgl/libangle"]
+    epoxy = Formula["s3rj1k/qemu-virgl/libepoxy-angle"]
+    virgl = Formula["s3rj1k/qemu-virgl/virglrenderer"]
+    ENV.prepend_path "PKG_CONFIG_PATH", "#{epoxy.opt_lib}/pkgconfig"
+    ENV.prepend_path "PKG_CONFIG_PATH", "#{virgl.opt_lib}/pkgconfig"
+
+    # Build flags follow the proven workflow "Build QEMU" step. ANGLE is reached
+    # via @rpath (its dylib ids are @rpath/lib*.dylib); bake the rpath so any
+    # direct ANGLE reference resolves. virgl/epoxy/loader resolve via their
+    # Homebrew-relocated absolute install names.
+    cd "repo" do
+      system "./configure",
+             "--prefix=#{prefix}",
+             "--target-list=aarch64-softmmu",
+             "--enable-cocoa",
+             "--enable-opengl",
+             "--enable-virglrenderer",
+             "--enable-slirp",
+             "--enable-curses",
+             "--enable-libssh",
+             "--enable-fdt=system",
+             "--disable-gtk",
+             "--disable-sdl",
+             "--disable-guest-agent",
+             "--smbd=#{HOMEBREW_PREFIX}/sbin/samba-dot-org-smbd",
+             "--extra-cflags=-I#{angle.opt_include}",
+             "--extra-ldflags=-L#{angle.opt_lib}",
+             "--extra-ldflags=-Wl,-rpath,#{angle.opt_lib}"
+      system "make", "-j#{ENV.make_jobs}", "install"
     end
 
-    ENV["PYTHON"] = venv_python
-    ENV.prepend_path "PYTHONPATH", venv_path/"lib/python3.13/site-packages"
+    # No install_name_tool surgery: Homebrew relocates the linked epoxy/virgl/
+    # loader/glib/... install names and re-signs on bottle pour.
 
-    # Set library paths
-    angle_prefix = Formula["startergo/qemu-virgl/libangle"].opt_prefix
-    epoxy_prefix = Formula["startergo/qemu-virgl/libepoxy-angle"].opt_prefix
-    virgl_prefix = Formula["startergo/qemu-virgl/virglrenderer"].opt_prefix
-    spice_protocol_prefix = Formula["spice-protocol"].opt_prefix
-    spice_server_prefix = Formula["spice-server"].opt_prefix
-
-    # Build configuration
-    args = %W[
-      --prefix=#{prefix}
-      --cc=#{ENV.cc}
-      --host-cc=#{ENV.cc}
-      --disable-bsd-user
-      --disable-guest-agent
-      --disable-sdl
-      --disable-gtk
-      --enable-cocoa
-      --enable-opengl
-      --enable-virglrenderer
-      --enable-curses
-      --enable-libssh
-      --enable-slirp
-      --enable-vde
-      --enable-fdt=system
-      --enable-debug
-      --enable-debug-info
-      --enable-trace-backends=log,simple
-      --enable-malloc=system
-      --extra-cflags=-I#{angle_prefix}/include
-      --extra-cflags=-I#{epoxy_prefix}/include
-      --extra-cflags=-I#{virgl_prefix}/include
-      --extra-cflags=-I#{spice_protocol_prefix}/include/spice-1
-      --extra-cflags=-I#{spice_server_prefix}/include/spice-server
-      --extra-cflags=-DNCURSES_WIDECHAR=1
-      --extra-ldflags=-L#{angle_prefix}/lib
-      --extra-ldflags=-L#{epoxy_prefix}/lib
-      --extra-ldflags=-L#{virgl_prefix}/lib
-      --extra-ldflags=-L#{spice_server_prefix}/lib
-      --extra-ldflags=-Wl,-rpath,#{angle_prefix}/lib
-      --extra-ldflags=-Wl,-rpath,#{epoxy_prefix}/lib
-      --extra-ldflags=-Wl,-rpath,#{virgl_prefix}/lib
-      --extra-ldflags=-Wl,-rpath,#{spice_server_prefix}/lib
-    ]
-
-    # Add smbd path
-    args << "--smbd=#{HOMEBREW_PREFIX}/sbin/samba-dot-org-smbd"
-    
-    # Only build specific targets: aarch64, x86_64, and i386
-    args << "--target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu"
-
-    system "./configure", *args
-    system "make", "V=1"
-    system "make", "install"
-    
-    # Use install_name_tool to embed library paths in QEMU binaries
-    # This allows direct execution without wrapper scripts or environment variables
-    
-    # Get all installed binaries and libraries
-    qemu_binaries = Dir["#{bin}/qemu-*"]
-    qemu_libs = Dir["#{lib}/*.dylib"]
-    
-    # Fix library paths in all QEMU binaries
-    qemu_binaries.each do |binary|
-      next unless File.executable?(binary) && !File.symlink?(binary)
-      
-      # Add rpath for our custom libraries
-      system "install_name_tool", "-add_rpath", "#{angle_prefix}/lib", binary rescue nil
-      system "install_name_tool", "-add_rpath", "#{epoxy_prefix}/lib", binary rescue nil
-      system "install_name_tool", "-add_rpath", "#{virgl_prefix}/lib", binary rescue nil
-      system "install_name_tool", "-add_rpath", "#{spice_server_prefix}/lib", binary rescue nil
-      
-      # Fix references to custom libraries
-      ["libEGL.dylib", "libGLESv2.dylib"].each do |lib|
-        system "install_name_tool", "-change", 
-               "#{angle_prefix}/lib/#{lib}",
-               "@rpath/#{lib}",
-               binary rescue nil
-      end
-      
-      ["libepoxy.0.dylib"].each do |lib|
-        system "install_name_tool", "-change",
-               "#{epoxy_prefix}/lib/#{lib}",
-               "@rpath/#{lib}",
-               binary rescue nil
-      end
-      
-      ["libvirglrenderer.1.dylib"].each do |lib|
-        system "install_name_tool", "-change",
-               "#{virgl_prefix}/lib/#{lib}",
-               "@rpath/#{lib}",
-               binary rescue nil
-      end
-    end
-    
-    # Also fix QEMU's own libraries if they exist
-    qemu_libs.each do |lib|
-      system "install_name_tool", "-add_rpath", "#{angle_prefix}/lib", lib rescue nil
-      system "install_name_tool", "-add_rpath", "#{epoxy_prefix}/lib", lib rescue nil
-      system "install_name_tool", "-add_rpath", "#{virgl_prefix}/lib", lib rescue nil
-    end
+    # Wrap ONLY the system emulator so the Vulkan loader finds the MoltenVK ICD
+    # and ANGLE uses Metal. These are non-DYLD vars, so they survive `sudo`
+    # (vmnet); the loader itself is linked, so no DYLD_* is needed. qemu-img and
+    # the other tools never touch Vulkan/Metal and stay unwrapped.
+    #
+    # molten-vk-venus ships its ICD keg-private under share/ (the shared etc path
+    # collides with homebrew-core molten-vk), so point VK_ICD_FILENAMES at it via
+    # opt_prefix; the ICD's relative library_path resolves to that keg's libMoltenVK.
+    mvk = Formula["s3rj1k/qemu-virgl/molten-vk-venus"]
+    libexec.install bin/"qemu-system-aarch64"
+    (bin/"qemu-system-aarch64").write_env_script libexec/"qemu-system-aarch64",
+      VK_ICD_FILENAMES:       "#{mvk.opt_prefix}/share/vulkan/icd.d/MoltenVK_icd.json",
+      ANGLE_DEFAULT_PLATFORM: "metal",
+      MVK_ALLOW_METAL_EVENTS: "1"
   end
 
   def caveats
     <<~EOS
-      QEMU has been built with VirGL/ANGLE GPU acceleration support.
-      
-      To run with OpenGL acceleration, use:
-        qemu-system-x86_64 -machine q35,accel=hvf -cpu host -m 4G \\
-          -device virtio-gpu-gl-pci -display cocoa,gl=es [other options]
-          
-      For Apple Silicon Macs, use:
-        qemu-system-aarch64 -machine virt,accel=hvf -cpu cortex-a72 -m 4G \\
-          -device virtio-gpu-gl-pci -display cocoa,gl=es [other options]
-          
-      For detailed usage examples, see:
-      https://github.com/startergo/homebrew-qemu-virgl
+      qemu-system-aarch64 is a wrapper that sets VK_ICD_FILENAMES (MoltenVK) and
+      ANGLE/Metal env so venus works without DYLD_* (which SIP strips under sudo).
+
+      Shared (vmnet) networking needs root, and `sudo` resets PATH, so invoke the
+      absolute path:
+        sudo "$(brew --prefix)/bin/qemu-system-aarch64" \\
+          -machine virt,accel=hvf -cpu host -m 8G \\
+          -device virtio-gpu-gl-pci,venus=true,hostmem=8G,blob=true \\
+          -display cocoa,gl=es [other options]
     EOS
   end
 
   test do
-    expected = "QEMU Project"
-    
-    # Test basic system emulators
-    %w[aarch64 x86_64].each do |arch|
-      assert_match expected, shell_output("#{bin}/qemu-system-#{arch} --version")
-    end
-
-    # Test disk image tools
-    resource("test-image").stage testpath
-    assert_match "file format: raw", shell_output("#{bin}/qemu-img info FLOPPY.img")
-
-    # Test that binaries can find libraries (check for missing library errors)
-    system "#{bin}/qemu-system-x86_64", "-accel", "help"
-    system "#{bin}/qemu-system-aarch64", "-accel", "help"
+    assert_match "QEMU", shell_output("#{bin}/qemu-system-aarch64 --version")
+    assert_match "QEMU", shell_output("#{bin}/qemu-img --version")
+    system bin/"qemu-system-aarch64", "-accel", "help"
   end
 end
