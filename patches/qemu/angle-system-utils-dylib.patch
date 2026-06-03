@@ -1,0 +1,20 @@
+venus: load ANGLE GL backends as lib<name>.dylib, not as macOS frameworks
+
+ANGLE's libEGL loads its GLESv2 backend through OpenSystemLibraryAndGetError().
+Its macOS branch builds "<name>.framework/Versions/Current/<name>" and forces
+SearchType::SystemDir. UTM builds ANGLE as plain dylibs, so that dlopen fails
+("Error loading EGL entry points: dlopen(GLESv2.framework/...)") and venus then
+segfaults. Build "lib<name>.dylib" instead and honour the caller's searchType,
+which for the libepoxy @loader_path dlopen resolves the dylib next to libEGL.
+
+--- a/Source/ThirdParty/ANGLE/src/common/system_utils.cpp
++++ b/Source/ThirdParty/ANGLE/src/common/system_utils.cpp
+@@ -220,6 +220,6 @@ void *OpenSystemLibraryAndGetError(const char *libraryName,
+ {
+ #if defined(ANGLE_PLATFORM_MACOS)
+-    std::string frameworkPath = std::string(libraryName) + ".framework/Versions/Current/" + std::string(libraryName);
+-    return OpenSystemLibraryWithExtensionAndGetError(frameworkPath.c_str(), SearchType::SystemDir, errorOut);
++    std::string frameworkPath = "lib" + std::string(libraryName) + ".dylib";
++    return OpenSystemLibraryWithExtensionAndGetError(frameworkPath.c_str(), searchType, errorOut);
+ #elif defined(ANGLE_PLATFORM_IOS_FAMILY)
+     std::string frameworkPath = std::string(libraryName) + ".framework/" + std::string(libraryName);
