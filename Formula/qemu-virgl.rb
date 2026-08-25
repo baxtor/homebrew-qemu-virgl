@@ -3,7 +3,7 @@ class QemuVirgl < Formula
   homepage "https://www.qemu.org/"
   # Dummy url: utmapp's submit/macos-venus branch is force-pushed, so the pinned
   # revision is fetched by SHA in `install`.
-  url "https://github.com/s3rj1k/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
+  url "https://github.com/baxtor/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
   version "2026.06.01"
   license "GPL-2.0-only"
 
@@ -30,10 +30,10 @@ class QemuVirgl < Formula
   depends_on "ncurses"
   depends_on "nettle"
   depends_on "pixman"
-  depends_on "s3rj1k/qemu-virgl/libangle"
-  depends_on "s3rj1k/qemu-virgl/libepoxy-angle"
-  depends_on "s3rj1k/qemu-virgl/molten-vk-venus"
-  depends_on "s3rj1k/qemu-virgl/virglrenderer"
+  depends_on "baxtor/qemu-virgl/libangle"
+  depends_on "baxtor/qemu-virgl/libepoxy-angle"
+  depends_on "baxtor/qemu-virgl/molten-vk-venus"
+  depends_on "baxtor/qemu-virgl/virglrenderer"
   depends_on "snappy"
   depends_on "spice-protocol"
   depends_on "spice-server"
@@ -49,9 +49,9 @@ class QemuVirgl < Formula
     ENV["LIBTOOL"] = "glibtool"
     ENV["PYTHON"] = Formula["python@3.13"].opt_bin/"python3.13"
 
-    angle = Formula["s3rj1k/qemu-virgl/libangle"]
-    epoxy = Formula["s3rj1k/qemu-virgl/libepoxy-angle"]
-    virgl = Formula["s3rj1k/qemu-virgl/virglrenderer"]
+    angle = Formula["baxtor/qemu-virgl/libangle"]
+    epoxy = Formula["baxtor/qemu-virgl/libepoxy-angle"]
+    virgl = Formula["baxtor/qemu-virgl/virglrenderer"]
     ENV.prepend_path "PKG_CONFIG_PATH", "#{epoxy.opt_lib}/pkgconfig"
     ENV.prepend_path "PKG_CONFIG_PATH", "#{virgl.opt_lib}/pkgconfig"
 
@@ -62,7 +62,7 @@ class QemuVirgl < Formula
     cd "repo" do
       system "./configure",
              "--prefix=#{prefix}",
-             "--target-list=aarch64-softmmu",
+             "--target-list=aarch64-softmmu,ppc-softmmu,x86_64-softmmu",
              "--enable-cocoa",
              "--enable-opengl",
              "--enable-virglrenderer",
@@ -91,7 +91,7 @@ class QemuVirgl < Formula
     # molten-vk-venus ships its ICD keg-private under share/ (the shared etc path
     # collides with homebrew-core molten-vk), so point VK_ICD_FILENAMES at it via
     # opt_prefix; the ICD's relative library_path resolves to that keg's libMoltenVK.
-    mvk = Formula["s3rj1k/qemu-virgl/molten-vk-venus"]
+    mvk = Formula["baxtor/qemu-virgl/molten-vk-venus"]
     libexec.install bin/"qemu-system-aarch64"
     (bin/"qemu-system-aarch64").write_env_script libexec/"qemu-system-aarch64",
       VK_ICD_FILENAMES:       "#{mvk.opt_prefix}/share/vulkan/icd.d/MoltenVK_icd.json",
@@ -115,7 +115,11 @@ class QemuVirgl < Formula
 
   test do
     assert_match "QEMU", shell_output("#{bin}/qemu-system-aarch64 --version")
+    assert_match "QEMU", shell_output("#{bin}/qemu-system-x86_64 --version")
+    assert_match "QEMU", shell_output("#{bin}/qemu-system-ppc --version")
     assert_match "QEMU", shell_output("#{bin}/qemu-img --version")
-    system bin/"qemu-system-aarch64", "-accel", "help"
+    system "#{bin}/qemu-system-aarch64", "-accel", "help"
+    system "#{bin}/qemu-system-x86_64", "-accel", "help"
+    system "#{bin}/qemu-system-ppc", "-accel", "help"
   end
 end

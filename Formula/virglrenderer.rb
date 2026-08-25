@@ -3,7 +3,7 @@ class Virglrenderer < Formula
   homepage "https://github.com/utmapp/virglrenderer"
   # Dummy url: the pinned commit lives on a force-pushed branch; the exact
   # revision is fetched by SHA in `install`.
-  url "https://github.com/s3rj1k/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
+  url "https://github.com/baxtor/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
   version "2026.06.01"
   license "MIT"
 
@@ -19,8 +19,8 @@ class Virglrenderer < Formula
   depends_on "pkg-config" => :build
   depends_on "python@3.13" => :build
   depends_on arch: :arm64
-  depends_on "s3rj1k/qemu-virgl/libangle"
-  depends_on "s3rj1k/qemu-virgl/libepoxy-angle"
+  depends_on "baxtor/qemu-virgl/libangle"
+  depends_on "baxtor/qemu-virgl/libepoxy-angle"
   depends_on "vulkan-headers"
   depends_on "vulkan-loader"
 
@@ -43,8 +43,8 @@ class Virglrenderer < Formula
            "https://github.com/utmapp/virglrenderer.git", sha
     system "git", "-C", "repo", "checkout", "-q", "FETCH_HEAD"
 
-    angle = Formula["s3rj1k/qemu-virgl/libangle"]
-    epoxy = Formula["s3rj1k/qemu-virgl/libepoxy-angle"]
+    angle = Formula["baxtor/qemu-virgl/libangle"]
+    epoxy = Formula["baxtor/qemu-virgl/libepoxy-angle"]
     cd "repo" do
       # -Dvulkan-dload=false LINKS the Khronos loader (dependency('vulkan') from the
       # vulkan-loader keg); dyld resolves libvulkan at load via Homebrew's relocatable

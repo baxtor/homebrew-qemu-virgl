@@ -3,7 +3,7 @@ class MoltenVkVenus < Formula
   homepage "https://github.com/utmapp/MoltenVK"
   # Dummy url: the pinned commit lives on a force-pushed branch; the exact
   # revision is fetched by SHA in `install`.
-  url "https://github.com/s3rj1k/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
+  url "https://github.com/baxtor/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
   version "2026.06.01"
   license "Apache-2.0"
 

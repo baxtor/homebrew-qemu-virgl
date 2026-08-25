@@ -4,7 +4,7 @@ class Libangle < Formula
   # Dummy url: the real source is a sparse, blobless checkout of WebKit done in
   # `install` (the full WebKit repo is far too large for a normal git url/bottle
   # fetch). The pinned WEBKIT_SHA below is the real, reproducible input.
-  url "https://github.com/s3rj1k/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
+  url "https://github.com/baxtor/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
   version "2026.06.01"
   license "BSD-3-Clause"
 

@@ -5,7 +5,7 @@ class LibepoxyAngle < Formula
   # reachable from the branch tip, so Homebrew's git strategy can't fetch it.
   # The exact revision is fetched by SHA in `install` (GitHub allows fetching a
   # reachable SHA directly).
-  url "https://github.com/s3rj1k/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
+  url "https://github.com/baxtor/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
   version "2026.06.01"
   license "MIT"
 
@@ -19,7 +19,7 @@ class LibepoxyAngle < Formula
   depends_on "ninja" => :build
   depends_on "pkg-config" => :build
   depends_on arch: :arm64
-  depends_on "s3rj1k/qemu-virgl/libangle"
+  depends_on "baxtor/qemu-virgl/libangle"
 
   def install
     sha = "5014658f79e4d6872a1ad6754da9098ccd9d4fc5"
@@ -28,7 +28,7 @@ class LibepoxyAngle < Formula
            "https://github.com/utmapp/libepoxy.git", sha
     system "git", "-C", "repo", "checkout", "-q", "FETCH_HEAD"
 
-    angle = Formula["s3rj1k/qemu-virgl/libangle"]
+    angle = Formula["baxtor/qemu-virgl/libangle"]
     cd "repo" do
       # Load ANGLE EGL/GLES via @rpath instead of the macOS framework path, so it
       # works under sudo (SIP strips DYLD_FRAMEWORK_PATH). @rpath resolves against
@@ -62,7 +62,7 @@ class LibepoxyAngle < Formula
   end
 
   test do
-    assert_match Formula["s3rj1k/qemu-virgl/libangle"].opt_lib.to_s,
+    assert_match Formula["baxtor/qemu-virgl/libangle"].opt_lib.to_s,
                  shell_output("otool -l #{lib}/libepoxy.0.dylib")
   end
 end
