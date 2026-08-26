@@ -4,7 +4,7 @@ class MoltenVkVenus < Formula
   # Dummy url: the pinned commit lives on a force-pushed branch; the exact
   # revision is fetched by SHA in `install`.
   url "https://github.com/baxtor/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
-  version "2026.06.01"
+  version "2026.08.26"
   license "Apache-2.0"
 
   def self.sha256(_)
@@ -21,7 +21,7 @@ class MoltenVkVenus < Formula
   depends_on arch: :arm64
 
   def install
-    sha = "111c14f3abf5c00118fc7a5b00c92d7abbf40f62"
+    sha = "ef1c5461774f5fbd224ddcfd91fd2c0ea23f0384"
     system "git", "init", "-q", "repo"
     system "git", "-C", "repo", "fetch", "--depth", "1",
            "https://github.com/utmapp/MoltenVK.git", sha

@@ -6,7 +6,7 @@ class LibepoxyAngle < Formula
   # The exact revision is fetched by SHA in `install` (GitHub allows fetching a
   # reachable SHA directly).
   url "https://github.com/baxtor/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
-  version "2026.06.01"
+  version "2026.08.26"
   license "MIT"
 
   def self.sha256(_)
@@ -22,7 +22,7 @@ class LibepoxyAngle < Formula
   depends_on "baxtor/qemu-virgl/libangle"
 
   def install
-    sha = "5014658f79e4d6872a1ad6754da9098ccd9d4fc5"
+    sha = "bf98587477fe68d07b93319ece7b40a7d0e2eabe"
     system "git", "init", "-q", "repo"
     system "git", "-C", "repo", "fetch", "--depth", "1",
            "https://github.com/utmapp/libepoxy.git", sha

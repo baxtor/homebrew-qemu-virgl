@@ -23,11 +23,11 @@ jobs:
     # CACHE_VERSION bumps to invalidate all build caches.
     env:
       WEBKIT_SHA:    ed78ab6e1a37f4f11583a0bd038f22ec91f3ff10
-      EPOXY_SHA:     5014658f79e4d6872a1ad6754da9098ccd9d4fc5
+      EPOXY_SHA:     bf98587477fe68d07b93319ece7b40a7d0e2eabe
       VIRGL_SHA:     d48a2d0d9a722fffd3f92c83e71d9426a4892a66
       QEMU_SHA:      f714f0e3370e8b4858a249ebaf6522f19b2fd97f
-      MOLTENVK_SHA:  111c14f3abf5c00118fc7a5b00c92d7abbf40f62
-      CACHE_VERSION: v1
+      MOLTENVK_SHA:  ef1c5461774f5fbd224ddcfd91fd2c0ea23f0384
+      CACHE_VERSION: v2
       CCACHE_DIR:    ${{ github.workspace }}/.ccache
 
     defaults:
