@@ -4,7 +4,7 @@ class QemuVirgl < Formula
   # Dummy url: utmapp's submit/macos-venus branch is force-pushed, so the pinned
   # revision is fetched by SHA in `install`.
   url "https://github.com/baxtor/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
-  version "2026.06.01"
+  version "2026.08.28"
   license "GPL-2.0-only"
 
   def self.sha256(_)
@@ -60,9 +60,11 @@ class QemuVirgl < Formula
     # direct ANGLE reference resolves. virgl/epoxy/loader resolve via their
     # Homebrew-relocated absolute install names.
     cd "repo" do
+      # No --target-list: build every target this QEMU supports (system emulators
+      # for all architectures). Omitting the flag rather than enumerating targets
+      # means new upstream targets are picked up automatically.
       system "./configure",
              "--prefix=#{prefix}",
-             "--target-list=aarch64-softmmu,ppc-softmmu,x86_64-softmmu",
              "--enable-cocoa",
              "--enable-opengl",
              "--enable-virglrenderer",
@@ -83,20 +85,31 @@ class QemuVirgl < Formula
     # No install_name_tool surgery: Homebrew relocates the linked epoxy/virgl/
     # loader/glib/... install names and re-signs on bottle pour.
 
-    # Wrap ONLY the system emulator so the Vulkan loader finds the MoltenVK ICD
-    # and ANGLE uses Metal. These are non-DYLD vars, so they survive `sudo`
-    # (vmnet); the loader itself is linked, so no DYLD_* is needed. qemu-img and
-    # the other tools never touch Vulkan/Metal and stay unwrapped.
+    # Wrap EVERY system emulator so the Vulkan loader finds the MoltenVK ICD and
+    # ANGLE uses Metal. These are non-DYLD vars, so they survive `sudo` (vmnet);
+    # the loader itself is linked, so no DYLD_* is needed. qemu-img and the other
+    # non-emulator tools never touch Vulkan/Metal and stay unwrapped.
+    #
+    # All emulators, not just aarch64: ANGLE_DEFAULT_PLATFORM is needed by ANY
+    # target driving virtio-gpu-gl through the virgl GL (vrend) path, not just by
+    # venus. ppc matters here specifically -- it runs AmigaOS4, whose virtio-gpu
+    # driver uses that GL path -- and an unwrapped emulator fails silently.
     #
     # molten-vk-venus ships its ICD keg-private under share/ (the shared etc path
     # collides with homebrew-core molten-vk), so point VK_ICD_FILENAMES at it via
     # opt_prefix; the ICD's relative library_path resolves to that keg's libMoltenVK.
     mvk = Formula["baxtor/qemu-virgl/molten-vk-venus"]
-    libexec.install bin/"qemu-system-aarch64"
-    (bin/"qemu-system-aarch64").write_env_script libexec/"qemu-system-aarch64",
+    gpu_env = {
       VK_ICD_FILENAMES:       "#{mvk.opt_prefix}/share/vulkan/icd.d/MoltenVK_icd.json",
       ANGLE_DEFAULT_PLATFORM: "metal",
-      MVK_ALLOW_METAL_EVENTS: "1"
+      MVK_ALLOW_METAL_EVENTS: "1",
+    }
+    emulators = Dir["#{bin}/qemu-system-*"].map { |f| File.basename(f) }
+    odie "no qemu-system-* binaries found to wrap" if emulators.empty?
+    emulators.each do |emu|
+      libexec.install bin/emu
+      (bin/emu).write_env_script libexec/emu, gpu_env
+    end
   end
 
   def caveats
@@ -104,20 +117,34 @@ class QemuVirgl < Formula
       qemu-system-aarch64 is a wrapper that sets VK_ICD_FILENAMES (MoltenVK) and
       ANGLE/Metal env so venus works without DYLD_* (which SIP strips under sudo).
 
+      venus REQUIRES -accel hvf,ipa-granule-size=4096. The guest allocates venus
+      blobs in 4K multiples, but HVF defaults to the 16K host page size and refuses
+      to map a region whose size is not a granule multiple; the unmapped region then
+      faults and aborts QEMU (assert(isv) in target/arm/hvf/hvf.c) the moment a guest
+      uses Vulkan. The granule cannot be set via -machine accel=hvf.
+
       Shared (vmnet) networking needs root, and `sudo` resets PATH, so invoke the
       absolute path:
         sudo "$(brew --prefix)/bin/qemu-system-aarch64" \\
-          -machine virt,accel=hvf -cpu host -m 8G \\
+          -machine virt -accel hvf,ipa-granule-size=4096 -cpu host -m 8G \\
           -device virtio-gpu-gl-pci,venus=true,hostmem=8G,blob=true \\
           -display cocoa,gl=es [other options]
     EOS
   end
 
   test do
-    assert_match "QEMU", shell_output("#{bin}/qemu-system-aarch64 --version")
-    assert_match "QEMU", shell_output("#{bin}/qemu-system-x86_64 --version")
-    assert_match "QEMU", shell_output("#{bin}/qemu-system-ppc --version")
+    # Built with no --target-list, so the full set of system emulators must be
+    # present -- not just the three the tap used to build.
+    emulators = Dir["#{bin}/qemu-system-*"].map { |f| File.basename(f) }
+    assert_operator emulators.count, :>=, 20,
+                    "expected all QEMU targets, got #{emulators.count}: #{emulators.join(", ")}"
+
     assert_match "QEMU", shell_output("#{bin}/qemu-img --version")
+    emulators.each do |emu|
+      assert_match "QEMU", shell_output("#{bin}/#{emu} --version")
+    end
+
+    # aarch64 is the wrapped, venus-enabled binary; spot-check accelerators.
     system "#{bin}/qemu-system-aarch64", "-accel", "help"
     system "#{bin}/qemu-system-x86_64", "-accel", "help"
     system "#{bin}/qemu-system-ppc", "-accel", "help"

@@ -22,6 +22,14 @@ Builds the `keg_only` venus stack (`libangle`, `libepoxy-angle`, `virglrenderer`
 `vmnet` networking needs root, and `sudo` resets `PATH`, so launch via the **absolute path**.
 The acceleration flags are `-device virtio-gpu-gl-pci,venus=true,…` and `-display cocoa,gl=es`.
 
+`-accel hvf,ipa-granule-size=4096` is **required** for venus. The guest allocates venus
+blob resources in 4 KiB multiples (e.g. `0x21000`), but HVF defaults to the 16 KiB host
+page size and refuses to map a region whose size is not a multiple of the granule
+(`accel/hvf/hvf-all.c`). The unmapped region then faults and trips `assert(isv)` in
+`target/arm/hvf/hvf.c`, aborting QEMU as soon as a guest actually uses Vulkan. A 4 KiB
+IPA granule (macOS 26 `hv_vm_config_set_ipa_granule`) makes those mappings legal.
+Note this must be `-accel hvf,…`; the granule cannot be set via `-machine accel=hvf`.
+
 ```sh
 # One-time setup: a disk, a writable copy of the UEFI vars, and an arm64 Linux ISO.
 qemu-img create -f qcow2 disk.qcow2 64G
@@ -31,7 +39,7 @@ curl -LO https://cdimage.ubuntu.com/releases/25.10/release/ubuntu-25.10-desktop-
 
 # Boot (drop -cdrom/-boot d once installed):
 sudo "$(brew --prefix)/bin/qemu-system-aarch64" \
-  -machine virt,accel=hvf -cpu host -smp 4 -m 8G \
+  -machine virt -accel hvf,ipa-granule-size=4096 -cpu host -smp 4 -m 8G \
   -device virtio-gpu-gl-pci,venus=true,hostmem=8G,blob=true \
   -display cocoa,gl=es \
   -device qemu-xhci -device usb-kbd -device usb-tablet \
