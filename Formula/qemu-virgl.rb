@@ -4,7 +4,7 @@ class QemuVirgl < Formula
   # Dummy url: utmapp's submit/macos-venus branch is force-pushed, so the pinned
   # revision is fetched by SHA in `install`.
   url "https://github.com/baxtor/homebrew-qemu-virgl/archive/refs/heads/master.tar.gz"
-  version "2026.08.28"
+  version "2026.08.29"
   license "GPL-2.0-only"
 
   def self.sha256(_)
@@ -45,6 +45,38 @@ class QemuVirgl < Formula
     system "git", "-C", "repo", "fetch", "--depth", "1",
            "https://github.com/utmapp/qemu.git", sha
     system "git", "-C", "repo", "checkout", "-q", "FETCH_HEAD"
+
+    # Make the GL/Metal scanout layers track the view instead of the guest
+    # scanout size. dpy_gl_scanout_texture() only fires on guest mode changes,
+    # so a window resize otherwise leaves the layer at its old guest-sized
+    # frame: part of the view is uncovered (stale/white rectangles) and
+    # zoom-to-fit / full-screen cannot scale. Mirrors
+    # patches/qemu/qemu-cocoa-scanout-fit-to-view.patch (used by CI).
+    # Non-block inreplace RAISES if a pattern is missing, so a QEMU bump that
+    # moves this code fails the build instead of silently dropping the fix.
+    cd "repo" do
+      mtl_scale = "        [self.metalLayer setContentsScale:[[self window] backingScaleFactor]];"
+      inreplace "ui/cocoa.m", mtl_scale,
+                [mtl_scale, "        [self.metalLayer setFrame:[self bounds]];"].join("\n")
+
+      gl_scale = "        [self.glLayer setContentsScale:[[self window] backingScaleFactor]];"
+      inreplace "ui/cocoa.m", "#{gl_scale}\n#ifdef USE_METAL",
+                [gl_scale,
+                 "        [self.glLayer setFrame:[self bounds]];",
+                 "#ifdef USE_METAL"].join("\n")
+
+      mtl_frame = "        self.metalLayer.frame = CGRectMake"
+      inreplace "ui/cocoa.m",
+                "#{mtl_frame}(0, 0, size.width / scale, size.height / scale);",
+                ["        self.metalLayer.frame = self.bounds;",
+                 "        self.metalLayer.magnificationFilter =",
+                 "            qatomic_read(&zoom_interpolation) ? kCAFilterLinear : " \
+                 "kCAFilterNearest;"].join("\n")
+
+      inreplace "ui/cocoa.m",
+                "            cocoaView.glLayer.frame = CGRectMake(0, 0, w / scale, h / scale);",
+                "            cocoaView.glLayer.frame = cocoaView.bounds;"
+    end
 
     ENV["LIBTOOL"] = "glibtool"
     ENV["PYTHON"] = Formula["python@3.13"].opt_bin/"python3.13"

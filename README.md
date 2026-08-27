@@ -71,4 +71,9 @@ vkcube
 - **`vmnet` networking fails**: needs root. Run under `sudo` with the absolute binary path,
   and use `vmnet-shared` (the supported macOS backend), not `-netdev user`.
 - **GPU not accelerated**: use `virtio-gpu-gl-pci` (not `virtio-gpu-pci`) and `-display cocoa,gl=es`.
+- **Use `gl=es`, never `gl=on`/`gl=core`**: a white square instead of the mouse cursor is the
+  signature of `gl=on` (confirmed fixed by `gl=es`). This tap's GL stack is ANGLE, ES only.
+  `ui/cocoa.m` takes the EGL/ANGLE path (and Metal-texture scanout) *only* when `gl=es`;
+  with `gl=on` it uses `initWithCGL:` and Apple's deprecated CGL instead, bypassing ANGLE.
+  virglrenderer even carries a "workaround bugs in Apple CGL" commit -- avoid that path.
 - **"Addressing limited to 32 bits"**: remove `highmem=off` or lower `-m`.

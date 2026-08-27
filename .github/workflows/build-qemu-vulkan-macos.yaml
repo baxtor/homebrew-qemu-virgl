@@ -114,12 +114,16 @@ jobs:
             git -C source/virglrenderer commit -aqm "venus: dlopen Vulkan loader via @loader_path"
           echo "rev=$(git -C source/virglrenderer rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Clone QEMU (utmapp, pinned)
+      - name: Clone + patch QEMU (utmapp, pinned)
         run: |
           set -eux
           git -C source/qemu init
           git -C source/qemu fetch --filter=blob:none https://github.com/utmapp/qemu.git "$QEMU_SHA"
           git -C source/qemu checkout FETCH_HEAD
+          # Make the GL/Metal scanout layers track the view, not the guest scanout size:
+          # dpy_gl_scanout_texture() only fires on guest mode changes, so a window resize
+          # otherwise leaves the layer guest-sized (uncovered view, broken zoom-to-fit).
+          git -C source/qemu apply "$GITHUB_WORKSPACE/patches/qemu/qemu-cocoa-scanout-fit-to-view.patch"
 
       # ─── ccache (shared across all C/C++ builds, xcodebuild ignores CC) ───
 
