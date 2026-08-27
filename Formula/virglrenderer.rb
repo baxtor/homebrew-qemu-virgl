@@ -30,7 +30,7 @@ class Virglrenderer < Formula
   end
 
   def install
-    python3 = Formula["python@3.13"].opt_bin/"python3.13"
+    python3 = formula_opt_bin("python@3.13")/"python3.13"
     venv = buildpath/"venv"
     system python3, "-m", "venv", venv
     resource("pyyaml").stage { system venv/"bin/python", "-m", "pip", "install", "." }

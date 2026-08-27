@@ -18,6 +18,10 @@ class QemuVirgl < Formula
   depends_on "python@3.13" => :build
   depends_on arch: :arm64
 
+  depends_on "baxtor/qemu-virgl/libangle"
+  depends_on "baxtor/qemu-virgl/libepoxy-angle"
+  depends_on "baxtor/qemu-virgl/molten-vk-venus"
+  depends_on "baxtor/qemu-virgl/virglrenderer"
   depends_on "dtc"
   depends_on "glib"
   depends_on "gnutls"
@@ -30,10 +34,6 @@ class QemuVirgl < Formula
   depends_on "ncurses"
   depends_on "nettle"
   depends_on "pixman"
-  depends_on "baxtor/qemu-virgl/libangle"
-  depends_on "baxtor/qemu-virgl/libepoxy-angle"
-  depends_on "baxtor/qemu-virgl/molten-vk-venus"
-  depends_on "baxtor/qemu-virgl/virglrenderer"
   depends_on "snappy"
   depends_on "spice-protocol"
   depends_on "spice-server"
@@ -79,7 +79,7 @@ class QemuVirgl < Formula
     end
 
     ENV["LIBTOOL"] = "glibtool"
-    ENV["PYTHON"] = Formula["python@3.13"].opt_bin/"python3.13"
+    ENV["PYTHON"] = formula_opt_bin("python@3.13")/"python3.13"
 
     angle = Formula["baxtor/qemu-virgl/libangle"]
     epoxy = Formula["baxtor/qemu-virgl/libepoxy-angle"]

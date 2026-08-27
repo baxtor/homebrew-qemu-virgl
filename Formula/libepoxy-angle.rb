@@ -62,7 +62,7 @@ class LibepoxyAngle < Formula
   end
 
   test do
-    assert_match Formula["baxtor/qemu-virgl/libangle"].opt_lib.to_s,
+    assert_match formula_opt_lib("baxtor/qemu-virgl/libangle").to_s,
                  shell_output("otool -l #{lib}/libepoxy.0.dylib")
   end
 end
